@@ -27,12 +27,8 @@
 скрипт работает отлично — он ищет, сканирует и управляет IoT-лампочками, включая Yeelight, Tuya, Tasmota и другие. 
 
 
+pip install yeelight tinytuya requests
 
-COMMON_PORTS = {
-    "Yeelight": [55443, 1982],
-    "Tuya": [6666, 6668],
-    "Tasmota/ESPHome": [80, 8080, 8888],
-    "Generic": [5353, 5683, 8888]
-}
+
 
 
