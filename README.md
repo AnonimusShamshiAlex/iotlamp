@@ -26,6 +26,9 @@
 
 скрипт работает отлично — он ищет, сканирует и управляет IoT-лампочками, включая Yeelight, Tuya, Tasmota и другие. 
 
+chmod x+ ip_iot.sh
+
+./ip_iot.sh
 
 pip install yeelight tinytuya requests
 
