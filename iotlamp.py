@@ -1,8 +1,10 @@
 import socket
-from yeelight import discover_bulbs, Bulb
-import tinytuya
+import concurrent.futures
 import time
 import requests
+from yeelight import discover_bulbs, Bulb
+import tinytuya
+import broadlink
 
 # Часто используемые порты для умных ламп
 COMMON_PORTS = {
@@ -40,41 +42,6 @@ def scan_ports(ip, ports):
             continue
     return open_ports
 
-# 🟡 Tasmota — управление через HTTP
-def control_tasmota(ip):
-    action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
-    try:
-        if action == "on":
-            r = requests.get(f"http://{ip}/cm?cmnd=Power%20On", timeout=2)
-        elif action == "off":
-            r = requests.get(f"http://{ip}/cm?cmnd=Power%20Off", timeout=2)
-        else:
-            print("❗ Неизвестная команда.")
-            return
-        if r.status_code == 200:
-            print("✅ Команда отправлена успешно.")
-        else:
-            print("⚠ Ошибка:", r.status_code)
-    except Exception as e:
-        print("⚠ Ошибка управления:", e)
-
-# 🔷 Tuya — управление через tinytuya
-def control_tuya(ip, device_id, local_key):
-    d = tinytuya.OutletDevice(device_id, ip, local_key)
-    d.set_version(3.3)  # важно для новых устройств
-    action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
-    try:
-        if action == "on":
-            d.turn_on()
-            print("✅ Лампа включена.")
-        elif action == "off":
-            d.turn_off()
-            print("✅ Лампа выключена.")
-        else:
-            print("❗ Неизвестная команда.")
-    except Exception as e:
-        print("⚠ Ошибка управления Tuya:", e)
-
 # 🔵 Yeelight
 def scan_yeelight():
     print("📡 Ищу Yeelight-лампы...")
@@ -106,16 +73,20 @@ def scan_tuya():
         print("⚠ Ошибка Tuya-сканирования:", e)
         return []
 
-# 🌐 Прочие устройства — Xiaomi, Tapo, Yandex и прочее
-def scan_generic():
-    print("📡 Сканирую остальные IP...")
+# 🌐 Ускоренное многопоточное сканирование остальных IP
+def fast_scan_all_ips(prefix=None):
+    print("⚡ Быстрое сканирование IP-адресов...")
     try:
-        prefix = ".".join(socket.gethostbyname(socket.gethostname()).split(".")[:3])
+        if prefix is None:
+            prefix = ".".join(socket.gethostbyname(socket.gethostname()).split(".")[:3])
     except:
-        prefix = "192.168.1"  # fallback
+        prefix = "192.168.1"
+
     ips = [f"{prefix}.{i}" for i in range(1, 255)]
+
     found = []
-    for ip in ips:
+
+    def scan_ip(ip):
         ports = scan_ports(ip, COMMON_PORTS["Generic"] + COMMON_PORTS["Xiaomi"] + COMMON_PORTS["Tapo"])
         if ports:
             brand = "Other"
@@ -123,15 +94,54 @@ def scan_generic():
                 brand = "Xiaomi"
             elif 443 in ports or 80 in ports:
                 brand = "Tapo/Yandex"
-            found.append({
+            return {
                 "brand": brand,
                 "ip": ip,
                 "model": "Unknown",
                 "ports": ports
-            })
-    return found
+            }
 
-# 🔧 Управление Yeelight
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+        results = list(executor.map(scan_ip, ips))
+
+    return [r for r in results if r]
+
+# 🟡 Tasmota
+def control_tasmota(ip):
+    action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
+    try:
+        if action == "on":
+            r = requests.get(f"http://{ip}/cm?cmnd=Power%20On", timeout=2)
+        elif action == "off":
+            r = requests.get(f"http://{ip}/cm?cmnd=Power%20Off", timeout=2)
+        else:
+            print("❗ Неизвестная команда.")
+            return
+        if r.status_code == 200:
+            print("✅ Команда отправлена успешно.")
+        else:
+            print("⚠ Ошибка:", r.status_code)
+    except Exception as e:
+        print("⚠ Ошибка управления:", e)
+
+# 🔷 Tuya
+def control_tuya(ip, device_id, local_key):
+    d = tinytuya.OutletDevice(device_id, ip, local_key)
+    d.set_version(3.3)
+    action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
+    try:
+        if action == "on":
+            d.turn_on()
+            print("✅ Лампа включена.")
+        elif action == "off":
+            d.turn_off()
+            print("✅ Лампа выключена.")
+        else:
+            print("❗ Неизвестная команда.")
+    except Exception as e:
+        print("⚠ Ошибка управления Tuya:", e)
+
+# 🔧 Yeelight
 def control_yeelight(ip):
     try:
         bulb = Bulb(ip)
@@ -147,12 +157,69 @@ def control_yeelight(ip):
     except Exception as e:
         print("⚠ Ошибка управления Yeelight:", e)
 
+# 🔹 Philips Hue
+def control_philips_hue(bridge_ip, username):
+    lights_url = f"http://{bridge_ip}/api/{username}/lights"
+    try:
+        r = requests.get(lights_url, timeout=3)
+        lights = r.json()
+        for lid, info in lights.items():
+            print(f"{lid}. {info['name']} (вкл: {info['state']['on']})")
+        light_id = input("Введите номер лампы: ").strip()
+        action = input("Включить или выключить? [on/off]: ").strip().lower()
+        state = {"on": action == "on"}
+        r = requests.put(f"{lights_url}/{light_id}/state", json=state)
+        if r.status_code == 200:
+            print("✅ Команда отправлена.")
+        else:
+            print("⚠ Ошибка:", r.text)
+    except Exception as e:
+        print("❗ Ошибка Philips Hue:", e)
+
+# 🔸 Broadlink
+def control_broadlink():
+    print("📡 Ищу устройства Broadlink...")
+    devices = broadlink.discover(timeout=4)
+    if not devices:
+        print("❌ Устройства не найдены.")
+        return
+
+    for i, dev in enumerate(devices):
+        print(f"{i + 1}. {dev.host}")
+
+    choice = int(input("Выбери устройство: ")) - 1
+    device = devices[choice]
+    device.auth()
+    action = input("Включить или выключить (через ИК-код)? [send]: ").strip().lower()
+    if action == "send":
+        hex_code = input("Введи ИК-код в hex (например, 2600...): ").strip()
+        try:
+            payload = bytes.fromhex(hex_code)
+            device.send_data(payload)
+            print("✅ Команда отправлена.")
+        except Exception as e:
+            print("⚠ Ошибка:", e)
+
 # 🔁 Главная логика
 def main():
     all_devices = []
     all_devices += scan_yeelight()
     all_devices += scan_tuya()
-    all_devices += scan_generic()
+    all_devices += fast_scan_all_ips()
+
+    print("\nДополнительно:")
+    print("P. Philips Hue")
+    print("B. Broadlink")
+
+    choice_input = input("\nВыбери номер устройства или P/B: ").strip()
+    if choice_input.lower() == "p":
+        bridge_ip = input("Введи IP моста Philips Hue: ").strip()
+        username = input("Введи Hue Username: ").strip()
+        control_philips_hue(bridge_ip, username)
+        return
+    elif choice_input.lower() == "b":
+        control_broadlink()
+        return
 
     if not all_devices:
         print("❌ Устройства не найдены.")
@@ -164,7 +231,7 @@ def main():
         print(f"   ▸ Открытые порты: {d['ports'] or 'нет'}")
 
     try:
-        choice = int(input("\nВыбери номер устройства для управления: ")) - 1
+        choice = int(choice_input) - 1
         dev = all_devices[choice]
 
         if dev["brand"] == "Yeelight":
