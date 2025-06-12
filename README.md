@@ -36,10 +36,10 @@ pip install tinytuya
 
 
 
-"
- "Yeelight": [55443, 1982],
-    "Tuya": [6666, 6668],
-    "Xiaomi": [54321, 5353],
-    "Tapo": [80, 443],
-    "Tasmota/ESPHome": [80, 8080, 8888],
-    "Generic": [5353, 5683, 8888] "
+
+    Yeelight: [55443, 1982],
+    Tuya: [6666, 6668],
+    Xiaomi: [54321, 5353],
+    Tapo: [80, 443],
+    Tasmota/ESPHome: [80, 8080, 8888],
+    Generic: [5353, 5683, 8888] 
