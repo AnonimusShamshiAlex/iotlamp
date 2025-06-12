@@ -58,6 +58,23 @@ def control_tasmota(ip):
     except Exception as e:
         print("⚠ Ошибка управления:", e)
 
+# 🔷 Tuya — управление через tinytuya
+def control_tuya(ip, device_id, local_key):
+    d = tinytuya.OutletDevice(device_id, ip, local_key)
+    d.set_version(3.3)  # важно для новых устройств
+    action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
+    try:
+        if action == "on":
+            d.turn_on()
+            print("✅ Лампа включена.")
+        elif action == "off":
+            d.turn_off()
+            print("✅ Лампа выключена.")
+        else:
+            print("❗ Неизвестная команда.")
+    except Exception as e:
+        print("⚠ Ошибка управления Tuya:", e)
+
 # 🔵 Yeelight
 def scan_yeelight():
     print("📡 Ищу Yeelight-лампы...")
@@ -92,7 +109,10 @@ def scan_tuya():
 # 🌐 Прочие устройства — Xiaomi, Tapo, Yandex и прочее
 def scan_generic():
     print("📡 Сканирую остальные IP...")
-    prefix = ".".join(socket.gethostbyname(socket.gethostname()).split(".")[:3])
+    try:
+        prefix = ".".join(socket.gethostbyname(socket.gethostname()).split(".")[:3])
+    except:
+        prefix = "192.168.1"  # fallback
     ips = [f"{prefix}.{i}" for i in range(1, 255)]
     found = []
     for ip in ips:
@@ -150,7 +170,9 @@ def main():
         if dev["brand"] == "Yeelight":
             control_yeelight(dev["ip"])
         elif dev["brand"] == "Tuya":
-            print("⚠ Управление Tuya требует токена и ID устройства (через TinyTuya API). Пока не реализовано.")
+            device_id = input("Введи device_id: ").strip()
+            local_key = input("Введи local_key: ").strip()
+            control_tuya(dev["ip"], device_id, local_key)
         elif dev["brand"].startswith("Tasmota") or 80 in dev["ports"]:
             control_tasmota(dev["ip"])
         else:
