@@ -30,9 +30,9 @@ chmod +x ip_iot.sh
 
 ./ip_iot.sh
 
-pip install yeelight tinytuya requests
+pip install yeelight tinytuya broadlink requests
 
-pip install tinytuya
+
 
 
 
