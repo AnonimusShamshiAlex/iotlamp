@@ -4,14 +4,32 @@ import tinytuya
 import time
 import requests
 
-# Порты, часто используемые разными лампами
+# Часто используемые порты для умных ламп
 COMMON_PORTS = {
     "Yeelight": [55443, 1982],
     "Tuya": [6666, 6668],
+    "Xiaomi": [54321, 5353],
+    "Tapo": [80, 443],
     "Tasmota/ESPHome": [80, 8080, 8888],
     "Generic": [5353, 5683, 8888]
 }
 
+# Определяем порты по модели устройства
+def get_possible_ports(model):
+    model = model.lower()
+    if "yeelight" in model:
+        return COMMON_PORTS["Yeelight"]
+    if "tuya" in model or "gauss" in model or "luazon" in model:
+        return COMMON_PORTS["Tuya"]
+    if "xiaomi" in model:
+        return COMMON_PORTS["Xiaomi"]
+    if "tapo" in model:
+        return COMMON_PORTS["Tapo"]
+    if "tasmota" in model or "esphome" in model:
+        return COMMON_PORTS["Tasmota/ESPHome"]
+    return COMMON_PORTS["Generic"]
+
+# Быстрое сканирование нужных портов
 def scan_ports(ip, ports):
     open_ports = []
     for port in ports:
@@ -22,13 +40,25 @@ def scan_ports(ip, ports):
             continue
     return open_ports
 
-def get_possible_ports(model):
-    for name, ports in COMMON_PORTS.items():
-        if name.lower() in model.lower():
-            return ports
-    return [55443, 6668, 8888]
+# 🟡 Tasmota — управление через HTTP
+def control_tasmota(ip):
+    action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
+    try:
+        if action == "on":
+            r = requests.get(f"http://{ip}/cm?cmnd=Power%20On", timeout=2)
+        elif action == "off":
+            r = requests.get(f"http://{ip}/cm?cmnd=Power%20Off", timeout=2)
+        else:
+            print("❗ Неизвестная команда.")
+            return
+        if r.status_code == 200:
+            print("✅ Команда отправлена успешно.")
+        else:
+            print("⚠ Ошибка:", r.status_code)
+    except Exception as e:
+        print("⚠ Ошибка управления:", e)
 
-# 🟢 Сканирование Yeelight
+# 🔵 Yeelight
 def scan_yeelight():
     print("📡 Ищу Yeelight-лампы...")
     bulbs = discover_bulbs(timeout=4)
@@ -41,7 +71,7 @@ def scan_yeelight():
         results.append({"brand": "Yeelight", "ip": ip, "model": model, "ports": open_ports})
     return results
 
-# 🔶 Сканирование Tuya-устройств
+# 🔶 Tuya, Gauss, Luazon
 def scan_tuya():
     print("📡 Ищу Tuya-устройства...")
     try:
@@ -59,42 +89,45 @@ def scan_tuya():
         print("⚠ Ошибка Tuya-сканирования:", e)
         return []
 
-# 🔷 Сканирование других устройств (Tasmota, ESPHome и т.д.)
+# 🌐 Прочие устройства — Xiaomi, Tapo, Yandex и прочее
 def scan_generic():
-    print("📡 Ищу прочие IoT-устройства...")
+    print("📡 Сканирую остальные IP...")
     prefix = ".".join(socket.gethostbyname(socket.gethostname()).split(".")[:3])
     ips = [f"{prefix}.{i}" for i in range(1, 255)]
-
     found = []
     for ip in ips:
-        ports = scan_ports(ip, COMMON_PORTS["Tasmota/ESPHome"])
+        ports = scan_ports(ip, COMMON_PORTS["Generic"] + COMMON_PORTS["Xiaomi"] + COMMON_PORTS["Tapo"])
         if ports:
+            brand = "Other"
+            if 54321 in ports:
+                brand = "Xiaomi"
+            elif 443 in ports or 80 in ports:
+                brand = "Tapo/Yandex"
             found.append({
-                "brand": "Tasmota/Other",
+                "brand": brand,
                 "ip": ip,
                 "model": "Unknown",
                 "ports": ports
             })
     return found
 
-# Управление Tasmota через HTTP
-def control_tasmota(ip):
+# 🔧 Управление Yeelight
+def control_yeelight(ip):
     try:
-        action = input("Введите 'on' для включения или 'off' для выключения Tasmota-лампы: ").strip().lower()
+        bulb = Bulb(ip)
+        action = input("Включить или выключить лампу? [on/off]: ").strip().lower()
         if action == "on":
-            r = requests.get(f"http://{ip}/cm?cmnd=Power%20On", timeout=2)
+            bulb.turn_on()
+            print("✅ Лампа включена.")
         elif action == "off":
-            r = requests.get(f"http://{ip}/cm?cmnd=Power%20Off", timeout=2)
+            bulb.turn_off()
+            print("✅ Лампа выключена.")
         else:
             print("❗ Неизвестная команда.")
-            return
-        if r.status_code == 200:
-            print("✅ Команда отправлена.")
-        else:
-            print("⚠ Ошибка отправки команды:", r.status_code)
     except Exception as e:
-        print("⚠ Ошибка управления Tasmota:", e)
+        print("⚠ Ошибка управления Yeelight:", e)
 
+# 🔁 Главная логика
 def main():
     all_devices = []
     all_devices += scan_yeelight()
@@ -102,33 +135,26 @@ def main():
     all_devices += scan_generic()
 
     if not all_devices:
-        print("❌ Ничего не найдено.")
+        print("❌ Устройства не найдены.")
         return
 
     print("\n🔍 Найденные устройства:")
     for i, d in enumerate(all_devices, 1):
-        print(f"{i}. {d['brand']} ({d['ip']}) - модель: {d['model']}")
-        print(f"    ▸ Открытые порты: {d['ports'] or 'нет'}")
+        print(f"{i}. {d['brand']} ({d['ip']}) — {d['model']}")
+        print(f"   ▸ Открытые порты: {d['ports'] or 'нет'}")
 
     try:
         choice = int(input("\nВыбери номер устройства для управления: ")) - 1
         dev = all_devices[choice]
 
         if dev["brand"] == "Yeelight":
-            bulb = Bulb(dev["ip"])
-            action = input("Введите 'on' для включения или 'off' для выключения: ").strip().lower()
-            if action == "on":
-                bulb.turn_on()
-                print("✅ Включено.")
-            elif action == "off":
-                bulb.turn_off()
-                print("✅ Выключено.")
-            else:
-                print("❗ Неизвестная команда.")
-        elif dev["brand"].startswith("Tasmota") and 80 in dev["ports"]:
+            control_yeelight(dev["ip"])
+        elif dev["brand"] == "Tuya":
+            print("⚠ Управление Tuya требует токена и ID устройства (через TinyTuya API). Пока не реализовано.")
+        elif dev["brand"].startswith("Tasmota") or 80 in dev["ports"]:
             control_tasmota(dev["ip"])
         else:
-            print("⚠ Управление не поддерживается для этого устройства.")
+            print("⚠ Управление этим устройством пока не поддерживается.")
     except Exception as e:
         print("⚠ Ошибка:", e)
 
